@@ -106,7 +106,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import json
 import os
-from threading import Thread
+from threading import Thread, local
 import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
@@ -475,13 +475,13 @@ class PipelineImpl(Pipeline):
         self.services_cache = None
 
         self.share["definition_pathname"] = context.definition_pathname
-        self.stream = None  # current stream, may be None
         self.stream_leases = {}
 
         self.pipeline_graph = self._create_pipeline(context.definition)
         self.share["element_count"] = self.pipeline_graph.element_count
         self.share["lifecycle"] = "ready"
 
+        self._thread_stream_data = local()
         self._create_frames_thread: Optional[Thread] = None
 
     # TODO: Better visualization of the Pipeline / PipelineElements details
@@ -489,6 +489,15 @@ class PipelineImpl(Pipeline):
             print(f"PIPELINE: {self.pipeline_graph.nodes()}")
             for node in self.pipeline_graph:
                 print(f"NODE: {node.name}")
+    
+    @property
+    def stream(self):
+        return getattr(self._thread_stream_data, "stream", None)
+
+    @stream.setter
+    def stream(self, value):
+        self._thread_stream_data.stream = value
+
 
     def _error(self, header, diagnostic):
         PipelineImpl._exit(header, diagnostic)
@@ -757,7 +766,6 @@ class PipelineImpl(Pipeline):
             self._process_stream_event(element_name, frame_output, stream_event)
             swag = {**swag, **frame_output}  # TODO: Consider all failure modes
 
-        self.stream = None
 
         # TODO: May need to return the result to a parent Pipeline
         # TODO: Replace "True" with StreamEvent.OKAY | STOP | ERROR
@@ -913,7 +921,6 @@ class PipelineImpl(Pipeline):
                     element.destroy_stream(stream_id)
                 else:
                     element.stop_stream(self.stream, stream_id)
-            self.stream = None
 
     def set_parameter(self, stream_id, name, value):
         if stream_id in self.stream_leases:
