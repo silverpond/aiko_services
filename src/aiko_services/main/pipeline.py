@@ -109,7 +109,7 @@ import os
 from threading import Thread, local
 import time
 import traceback
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from aiko_services.main import *
 from aiko_services.main.transport import *
@@ -328,7 +328,7 @@ class PipelineElementImpl(PipelineElement):
 # TODO: For "rate", measure time since last frame to be more accurate
 # FIX:  For "rate" check "rate=0" (fills mailbox) versus "rate=None" ?
 
-    def _create_frames_thread(self, stream, frame_generator, rate):
+    def _create_frames_thread_fn(self, stream, frame_generator, rate):
         frame_id = 0
         while not stream["terminate"]:
             self.pipeline._enable_stream_thread_local(stream["stream_id"])
@@ -353,7 +353,7 @@ class PipelineElementImpl(PipelineElement):
 
     def create_frames(self, stream, frame_generator, rate=None):
         thread_args=(stream, frame_generator, rate)
-        Thread(target=self._create_frames_thread, args=thread_args).start()
+        self.pipeline._create_frames_thread = Thread(target=self._create_frames_thread_fn, args=thread_args)
 
     def get_parameter(self, name, default=None, use_pipeline=True):
     # TODO: During process_frame(), stream parameters should be updated
@@ -489,6 +489,9 @@ class PipelineImpl(Pipeline):
 
         self.share["streams"] = 0
         self.share["streams_paused"] = 0
+
+        self._create_frames_thread: Optional[Thread] = None
+
         event.add_timer_handler(self._status_update_timer, 1.0)
 
     def _enable_stream_thread_local(self, stream_id):
@@ -960,10 +963,12 @@ class PipelineImpl(Pipeline):
                             "Pipeline stopped")
             self._disable_stream_thread_local()
 
+            if self._create_frames_thread is not None:
+                self._create_frames_thread.start()
+
     def destroy_stream(self, stream_id):
         if stream_id in self.stream_leases:
             stream_lease = self.stream_leases[stream_id]
-            del self.stream_leases[stream_id]
             self.stream = stream_lease.data
             self.logger.debug(f"Destroy stream: {self._id(self.stream)}")
             self._enable_stream_thread_local(stream_id)
@@ -977,6 +982,7 @@ class PipelineImpl(Pipeline):
                 else:
                     element.stop_stream(self.stream, stream_id)
             self._disable_stream_thread_local()
+            del self.stream_leases[stream_id]
 
     def set_parameter(self, stream_id, name, value):
         if stream_id in self.stream_leases:
