@@ -3,6 +3,7 @@
 # - None, yet !
 
 from abc import abstractmethod
+from collections.abc import Iterable
 
 import aiko_services as aiko
 
@@ -30,8 +31,7 @@ class DataScheme:
 
     @abstractmethod
     def create_sources(self, stream, data_sources,
-        frame_generator=None, use_create_frame=True):
-        return aiko.StreamEvent.OKAY, {}
+        frame_generator=None, use_create_frame=True) -> Iterable:
 
     def create_targets(self, stream, data_targets):
         return aiko.StreamEvent.OKAY, {}
