@@ -4,3 +4,6 @@ __version__ = "v0.6"
 
 from aiko_services.main import *
 process = aiko.process
+
+
+foo = 'bar'
