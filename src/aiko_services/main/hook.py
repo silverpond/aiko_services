@@ -50,7 +50,7 @@
 from abc import abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field, is_dataclass
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, OrderedDict as OrderedDictType
 
 from aiko_services.main import *
 
@@ -72,7 +72,7 @@ class HookHandler:
 class Hook:
     name: str  # "component_name.hook_name:version"
     enabled: bool = ENABLED_DEFAULT
-    handlers: OrderedDict[str, HookHandler] = field(default_factory=OrderedDict)
+    handlers: OrderedDictType[str, "HookHandler"] = field(default_factory=OrderedDict)
     invoked: int = 0
 
 class Hooks:
