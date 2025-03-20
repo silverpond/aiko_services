@@ -104,10 +104,18 @@ import traceback
 from aiko_services.main import *
 from aiko_services.main.utilities import *
 
-__all__ = ["Actor", "ActorImpl", "ActorTest", "ActorTestImpl", "ActorTopic"]
+__all__ = [
+    "Actor", "ActorImpl", "ActorTest", "ActorTestImpl", "ActorTopic",
+    "ACTOR_HOOK_MESSAGE_CALL", "ACTOR_HOOK_MESSAGE_IN"
+]
 
 _AIKO_LOG_LEVEL_ACTOR = os.environ.get("AIKO_LOG_LEVEL_ACTOR", "INFO")
 _LOGGER = aiko.logger(__name__, log_level=_AIKO_LOG_LEVEL_ACTOR)
+
+ACTOR_HOOK_MESSAGE_CALL = "actor.message_call:"
+_ACTOR_HOOK_MESSAGE_CALL = ACTOR_HOOK_MESSAGE_CALL+"0"
+ACTOR_HOOK_MESSAGE_IN = "actor.message_in:"
+_ACTOR_HOOK_MESSAGE_IN = ACTOR_HOOK_MESSAGE_IN+"0"
 
 class Message:
     def __init__(self, target_object, command, arguments, target_function=None):
@@ -179,6 +187,10 @@ class Actor(Service):
     def run(self, mqtt_connection_required=True):
         pass
 
+    @abstractmethod
+    def set_log_level(self, level):
+        pass
+
 class ActorImpl(Actor):
     @classmethod
     def proxy_post_message(
@@ -195,6 +207,9 @@ class ActorImpl(Actor):
         context.get_implementation("Service").__init__(self, context)
         if not hasattr(self, "logger"):
             self.logger = aiko.logger(context.name)
+
+        self.add_hook(_ACTOR_HOOK_MESSAGE_CALL)
+        self.add_hook(_ACTOR_HOOK_MESSAGE_IN)
 
         self.share = {
             "lifecycle": "ready",
@@ -216,6 +231,9 @@ class ActorImpl(Actor):
         return f"{self.name}/{self.service_id}/{topic}"
 
     def _mailbox_handler(self, topic, message, time_posted):
+        self.run_hook(_ACTOR_HOOK_MESSAGE_CALL, lambda: {
+            "topic": topic, "message": message, "time_posted": time_posted})
+
         message.invoke()
 
     def _topic_in_handler(self, _aiko, topic, payload_in):
@@ -228,6 +246,10 @@ class ActorImpl(Actor):
 
     def _post_message(
         self, topic, command, args, delay=None, target_function=None):
+
+        self.run_hook(_ACTOR_HOOK_MESSAGE_IN, lambda: {
+            "topic": topic, "command": command, "args": args,
+            "delay": delay, "target_function": target_function})
 
         target_object = self
         message = Message(
@@ -261,7 +283,7 @@ class ActorImpl(Actor):
     #       _LOGGER.debug(f"ECProducer: {command} {item_name} {item_value}")
         if item_name == "log_level":
             try:
-                self.logger.setLevel(str(item_value).upper())
+                self.logger.setLevel(log_level_real(item_value))
             except ValueError:
                 pass
 
@@ -279,8 +301,8 @@ class ActorImpl(Actor):
             raise exception
         self.share["running"] = False
 
-    def set_log_level(self, level):  # Override to set subclass _LOGGER level
-        pass
+    def set_log_level(self, level):
+        self.ec_producer.update("log_level", level.upper())
 
 class ActorTest(Actor):  # TODO: Move into "../examples/"
     Interface.default("ActorTest", "aiko_services.main.actor.ActorTestImpl")
@@ -299,7 +321,7 @@ class ActorTest(Actor):  # TODO: Move into "../examples/"
     def test(self, value):
         pass
 
-class ActorTestImpl(ActorTest):  # TODO: Move into "../examples/"
+class ActorTestImpl(ActorTest):  # TODO: Move into "../examples/" showing hooks
     def __init__(self, context):
         context.get_implementation("Actor").__init__(self, context)
         self.test_count = None

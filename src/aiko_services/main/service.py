@@ -50,6 +50,8 @@
 # ~~~~~
 # - BUG: Provide filtered Services to "service_change_handler"
 #
+# - Service Hooks should be optional, whilst Actor Hooks are baked in
+#
 # - Consider using @dataclass, as per "pipeline.py"
 #
 # - If a Service is created after the Process has found the Registrar,
@@ -228,9 +230,18 @@ class ServiceFilter:
         self.tags = tags
 
     def __repr__(self):
-        return f"{self.topic_paths}, {self.name}, "  \
-               f"{self.protocol}, {self.transport}, "      \
+        return f"{self.topic_paths}, {self.name}, "    \
+               f"{self.protocol}, {self.transport}, "  \
                f"{self.owner}, {self.tags}"
+
+    def summary(self):
+        summary  = "" if self.topic_paths == "*" else f", {self.topic_paths}"
+        summary += "" if self.name        == "*" else f", {self.name}"
+        summary += "" if self.protocol    == "*" else f", {self.protocol}"
+        summary += "" if self.transport   == "*" else f", {self.transport}"
+        summary += "" if self.owner       == "*" else f", {self.owner}"
+        summary += "" if self.tags        == "*" else f", {self.tags}"
+        return summary[2:] if len(summary) else "any"
 
 class ServiceTags:  # TODO: Dictionary of keyword / value pairs
     @classmethod
@@ -493,7 +504,7 @@ class Services:
 
 # --------------------------------------------------------------------------- #
 
-class Service(ServiceProtocolInterface):
+class Service(ServiceProtocolInterface, Hooks):  # TODO: Make Hooks be optional
     Interface.default("Service", "aiko_services.main.service.ServiceImpl")
 
     @abstractmethod

@@ -80,12 +80,15 @@ class Stream:
     frame_id: int = FIRST_FRAME_ID  # only updated by Pipeline thread
     frames: Dict[int, Frame] = field(default_factory=dict)
     graph_path: str = None  # Graph path (head_node_name), default: first path
-    lock: Lock = Lock(f"{__name__}_{stream_id}")
+    lock: Lock = field(init=False)
     parameters: Dict[str, Any] = field(default_factory=dict)
     queue_response: queue = None
     state: StreamState = StreamState.RUN
     topic_response: str = None
     variables: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.lock = Lock(f"{__name__}_{self.stream_id}")
 
     def set_state(self, state):
         if state == StreamState.ERROR and self.state > StreamState.ERROR:
@@ -113,5 +116,9 @@ class Stream:
         self.frame_id = int(stream_dict.get("frame_id", self.frame_id))
         self.graph_path = stream_dict.get("graph_path", self.graph_path)
         self.parameters = stream_dict.get("parameters", self.parameters)
+        self.queue_response = stream_dict.get(
+            "queue_response", self.queue_response)
         self.state = int(stream_dict.get("state", StreamState.RUN))
+        self.topic_response = stream_dict.get(
+            "topic_response", self.topic_response)
         return True

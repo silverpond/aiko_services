@@ -19,6 +19,8 @@ from .context import (
 
 from .component import compose_class, compose_instance
 
+from .hook import DEFAULT_HOOK, Hook, Hooks
+
 from .connection import ConnectionState, Connection
 
 from .event import (
@@ -40,7 +42,7 @@ from .service import (
     Service, ServiceImpl
 )
 
-from .state import StateMachine
+from .state import StateMachineOld
 
 from .proxy import ProxyAllMethods, is_callable, proxy_trace
 
@@ -51,7 +53,14 @@ from .share import (
 )
 
 from .actor import (
-    Actor, ActorImpl, ActorTest, ActorTestImpl, ActorTopic
+    Actor, ActorImpl, ActorTest, ActorTestImpl, ActorTopic,
+    ACTOR_HOOK_MESSAGE_CALL, ACTOR_HOOK_MESSAGE_IN
+)
+
+from .discovery import (
+    ServiceDiscovery, ActorDiscovery,
+    PipelineElementDiscovery, PipelineDiscovery,
+    do_command, do_discovery, do_request, get_service_proxy
 )
 
 from .process_manager import ProcessManager
@@ -65,7 +74,8 @@ from .stream import (
 
 from .pipeline import (
     Pipeline, PipelineElement, PipelineElementImpl, PipelineImpl,
-    PROTOCOL_PIPELINE
+    PIPELINE_HOOK_PROCESS_ELEMENT, PIPELINE_HOOK_PROCESS_ELEMENT_POST,
+    PIPELINE_HOOK_PROCESS_FRAME, PROTOCOL_PIPELINE
 )
 
 from .scheme import DataScheme
