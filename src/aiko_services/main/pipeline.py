@@ -1312,6 +1312,7 @@ class PipelineImpl(Pipeline):
                         self._process_metrics_start(metrics)
                         self.run_hook(_PIPELINE_HOOK_PROCESS_ELEMENT, lambda: {
                             "element_name": element_name,
+                            "element": element,
                             "stream": stream,
                             "inputs": inputs})
                         try:
@@ -1340,6 +1341,7 @@ class PipelineImpl(Pipeline):
                         self.run_hook(_PIPELINE_HOOK_PROCESS_ELEMENT_POST,
                             lambda: {
                                 "element_name": element_name,
+                                "element": element,
                                 "stream": stream, "stream_event": stream_event,
                                 "frame_data_out": frame_data_out})
                         stream.set_state(self._process_stream_event(
