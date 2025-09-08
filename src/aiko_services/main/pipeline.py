@@ -1106,6 +1106,7 @@ class PipelineImpl(Pipeline):
                 actor = get_actor_mqtt(stream.topic_response, Pipeline)
                 actor.process_frame_response(stream_info, diagnostic)
         finally:
+            stream.lock.release()
             if use_thread_local:
                 stream.lock.release()
                 self._disable_thread_local("destroy_stream()")
