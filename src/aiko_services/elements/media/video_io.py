@@ -110,13 +110,12 @@ except ModuleNotFoundError:  # TODO: Optional warning flag
 
 # --------------------------------------------------------------------------- #
 
-CAMERA_API_SYSTEM_LOOKUP = {
-    "darwin":  cv2.CAP_AVFOUNDATION,
-    "linux":   cv2.CAP_V4L2,
-    "windows": cv2.CAP_MSMF
-}
-
 def open_video_capture(camera_id=0):
+    CAMERA_API_SYSTEM_LOOKUP = {
+        "darwin":  cv2.CAP_AVFOUNDATION,
+        "linux":   cv2.CAP_V4L2,
+        "windows": cv2.CAP_MSMF
+    }
     camera_api = 0  # auto-select
     system = platform.system().lower()
     if system in CAMERA_API_SYSTEM_LOOKUP:
