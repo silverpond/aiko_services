@@ -23,7 +23,7 @@ class Terminate(aiko.PipelineElement):
         aiko.process.terminate()  # TODO: Improve Aiko Services Process exit
         return aiko.StreamEvent.OKAY, {}
 
-def do_create_pipeline(pipeline_definition_json):
+def do_create_pipeline(pipeline_definition_json, hooks=None):
     file = None
     with tempfile.NamedTemporaryFile(delete=True, mode="w") as file:
         file.write(pipeline_definition_json)
@@ -38,4 +38,13 @@ def do_create_pipeline(pipeline_definition_json):
             frame_id=0, frame_data=FRAME_DATA,
             grace_time=GRACE_TIME, queue_response=None)
 
+        if hooks is not None:
+            for hook, hook_function in hooks.items():
+                pipeline.add_hook_handler(hook, hook_function)
+
         pipeline.run(mqtt_connection_required=False)
+
+        # Clean up global hooks
+        if hooks is not None:
+            for hook, hook_function in hooks.items():
+                pipeline.remove_hook_handler(hook, hook_function)

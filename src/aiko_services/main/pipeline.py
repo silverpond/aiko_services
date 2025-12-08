@@ -1649,6 +1649,7 @@ class PipelineImpl(Pipeline):
 
         elif stream_event == StreamEvent.ERROR:
             stream_state = StreamState.ERROR
+            stream.state = stream_state
             self.logger.error(get_diagnostic(diagnostic))
             if not in_destroy_stream:  # avoid destroy_stream() recursion
                 self.destroy_stream(get_stream_id(), use_thread_local=False,
