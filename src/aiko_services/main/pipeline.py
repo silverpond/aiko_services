@@ -189,8 +189,12 @@ __all__ = [
     "Pipeline", "PipelineElement", "PipelineElementImpl",
     "PipelineElementLoop",
     "PipelineImpl",
+    "PIPELINE_HOOK_DESTROY_STREAM",
     "PIPELINE_HOOK_PROCESS_ELEMENT", "PIPELINE_HOOK_PROCESS_ELEMENT_POST",
-    "PIPELINE_HOOK_PROCESS_FRAME", "PROTOCOL_PIPELINE"
+    "PIPELINE_HOOK_PROCESS_FRAME", "PIPELINE_HOOK_PROCESS_FRAME_COMPLETE",
+    "PIPELINE_HOOK_START_STREAM", "PIPELINE_HOOK_START_STREAM_POST",
+    "PIPELINE_HOOK_STOP_STREAM", "PIPELINE_HOOK_STOP_STREAM_POST",
+    "PROTOCOL_PIPELINE"
 ]
 
 _VERSION = 0
@@ -208,6 +212,14 @@ PIPELINE_HOOK_PROCESS_FRAME = "pipeline.process_frame:"
 _PIPELINE_HOOK_PROCESS_FRAME = PIPELINE_HOOK_PROCESS_FRAME+"0"
 PIPELINE_HOOK_PROCESS_FRAME_COMPLETE = "pipeline.process_frame_complete:"
 _PIPELINE_HOOK_PROCESS_FRAME_COMPLETE = PIPELINE_HOOK_PROCESS_FRAME_COMPLETE+"0"
+PIPELINE_HOOK_START_STREAM = "pipeline.start_stream:"
+_PIPELINE_HOOK_START_STREAM = PIPELINE_HOOK_START_STREAM+"0"
+PIPELINE_HOOK_START_STREAM_POST = "pipeline.start_stream_post:"
+_PIPELINE_HOOK_START_STREAM_POST = PIPELINE_HOOK_START_STREAM_POST+"0"
+PIPELINE_HOOK_STOP_STREAM = "pipeline.stop_stream:"
+_PIPELINE_HOOK_STOP_STREAM = PIPELINE_HOOK_STOP_STREAM+"0"
+PIPELINE_HOOK_STOP_STREAM_POST = "pipeline.stop_stream_post:"
+_PIPELINE_HOOK_STOP_STREAM_POST = PIPELINE_HOOK_STOP_STREAM_POST+"0"
 PIPELINE_HOOK_DESTROY_STREAM = "pipeline.destroy_stream:"
 _PIPELINE_HOOK_DESTROY_STREAM = PIPELINE_HOOK_DESTROY_STREAM+"0"
 
@@ -707,6 +719,10 @@ class PipelineImpl(Pipeline):
         self.add_hook(_PIPELINE_HOOK_PROCESS_ELEMENT_POST)
         self.add_hook(_PIPELINE_HOOK_PROCESS_FRAME)
         self.add_hook(_PIPELINE_HOOK_PROCESS_FRAME_COMPLETE)
+        self.add_hook(_PIPELINE_HOOK_START_STREAM)
+        self.add_hook(_PIPELINE_HOOK_START_STREAM_POST)
+        self.add_hook(_PIPELINE_HOOK_STOP_STREAM)
+        self.add_hook(_PIPELINE_HOOK_STOP_STREAM_POST)
         self.add_hook(_PIPELINE_HOOK_DESTROY_STREAM)
 
         self.pipeline_graph = self._create_pipeline_graph(context.definition)
@@ -1003,6 +1019,10 @@ class PipelineImpl(Pipeline):
                 element, element_name, local, _ =  \
                     PipelineGraph.get_element(node)
                 if local:  ## Local element ##
+                    self.run_hook(_PIPELINE_HOOK_START_STREAM, lambda: {
+                        "element_name": element_name,
+                        "element": element,
+                        "stream": stream})
                     try:
                         stream_event, diagnostic = element.start_stream(
                             stream, stream_id)
@@ -1012,6 +1032,12 @@ class PipelineImpl(Pipeline):
                         stream_event = StreamEvent.ERROR
                         diagnostic = {"diagnostic": traceback.format_exc()}
 
+                    self.run_hook(_PIPELINE_HOOK_START_STREAM_POST, lambda: {
+                        "element_name": element_name,
+                        "element": element,
+                        "stream": stream,
+                        "stream_event": stream_event,
+                        "diagnostic": diagnostic})
                     stream.set_state(self._process_stream_event(
                         element_name, stream, stream_event, diagnostic))
                     if stream.state == StreamState.ERROR:
@@ -1088,6 +1114,10 @@ class PipelineImpl(Pipeline):
                 element, element_name, local, _ =  \
                     PipelineGraph.get_element(node)
                 if local:  ## Local element ##
+                    self.run_hook(_PIPELINE_HOOK_STOP_STREAM, lambda: {
+                        "element_name": element_name,
+                        "element": element,
+                        "stream": stream})
                     try:
                         stream_event, stop_stream_data = element.stop_stream(
                             stream, stream_id)
@@ -1099,6 +1129,12 @@ class PipelineImpl(Pipeline):
                         stream_event = StreamEvent.ERROR
                         diagnostic = {"diagnostic": traceback.format_exc()}
 
+                    self.run_hook(_PIPELINE_HOOK_STOP_STREAM_POST, lambda: {
+                        "element_name": element_name,
+                        "element": element,
+                        "stream": stream,
+                        "stream_event": stream_event,
+                        "diagnostic": diagnostic})
                     stream.set_state(self._process_stream_event(
                         element_name, stream, stream_event, diagnostic,
                         in_destroy_stream=True))
