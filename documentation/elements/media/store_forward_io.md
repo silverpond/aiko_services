@@ -14,7 +14,7 @@ source:
 related: [pipeline_element, data_source_target, scheme, stream, parameters,
   share, store_forward, scheme_store_forward, synthetic_io, video_io]
 version: "0.8-dev"
-last_updated: 2026-09-15
+last_updated: 2026-09-18
 ---
 
 # StoreForward video segment writer
@@ -25,7 +25,8 @@ last_updated: 2026-09-15
 [DataTarget](../../concepts/data_source_target.md)
 [PipelineElement](../../concepts/pipeline_element.md) at the end of a
 video Pipeline. It receives the standard `images: [image]` frame data
-and encodes the frames into MP4 segments with OpenCV. It closes a segment
+and encodes the frames into fragmented H.264 MP4 with PyAV, or plain MP4
+with OpenCV. It closes a segment
 after `segment_seconds` or `segment_frames`, whichever comes first. Each
 closed segment is written into the outbox named by the
 [`store_forward://`](scheme_store_forward.md) URL. There a
@@ -33,9 +34,9 @@ closed segment is written into the outbox named by the
 of it and delivers it to the peer host.
 
 The class name follows the `<Media>Write<Scheme>` pattern of
-[`VideoWriteFile`](video_io.md), which it resembles: the same OpenCV
-writer, RGB frames converted to BGR, the same `format` and `frame_rate`
-parameters.
+[`VideoWriteFile`](video_io.md). Select `fmp4` to encode RGB frames as
+H.264 and write one-second MP4 fragments. Other `format` values are
+OpenCV fourcc tags and use the plain MP4 writer.
 
 **Why to use it**: a camera Pipeline on a host with intermittent
 connectivity keeps recording while the link is down. The segments queue
@@ -101,7 +102,7 @@ Element definition:
   "parameters": {
     "data_targets":    "(store_forward://data_out/outbox)",
     "segment_seconds": 10.0,
-    "format":          "mp4v"
+    "format":          "fmp4"
   },
   "input":  [{"name": "images", "type": "[image]"}],
   "output": [],
@@ -117,7 +118,7 @@ Element definition:
 | `segment_seconds` | `10.0` | Close a segment after this many seconds (0: unused) |
 | `segment_frames` | `0` | Or after this many frames (0: unused). Either bound closes the segment |
 | `frame_rate` | `15.0` | Encoded frames per second. Keep equal to the source `rate` |
-| `format` | `mp4v` | OpenCV fourcc tag |
+| `format` | `mp4v` | `fmp4` for fragmented H.264 MP4 through PyAV, or an OpenCV fourcc tag |
 | `resolution` | first frame | `WxH`, otherwise the shape of the first frame of each segment |
 | `segment_prefix` | none | Optional file name prefix, `[A-Za-z0-9_-]`, up to 32 characters, read by the scheme |
 
@@ -132,7 +133,9 @@ Share: `outbox`, `segment` (the open segment, `-` between segments),
 
 `process_frame()` returns `StreamEvent.OKAY` with no outputs. It returns
 `ERROR` when a frame is not a NumPy array or a video writer cannot be
-opened. `start_stream()` returns `ERROR` when OpenCV is absent.
+opened or finalized. `start_stream()` returns `ERROR` when OpenCV is
+absent for a fourcc format. The `fmp4` format needs PyAV with the
+`libx264` encoder. Install it with `pip install "aiko_services[fmp4]"`.
 
 ## For framework developers (internals)
 
@@ -141,7 +144,7 @@ opened. `start_stream()` returns `ERROR` when OpenCV is absent.
 ```
  images ──► process_frame()
               │ no open segment?  open .<name>.mp4 (dot-prefixed temp)
-              │ write frame (RGB -> BGR)
+              │ write frame (fMP4: RGB; OpenCV: RGB -> BGR)
               │ bound reached?    close: release, os.replace -> <name>.mp4
               ▼
  stop_stream() closes the open segment, then DataTarget.stop_stream()
@@ -160,6 +163,10 @@ too. A segment with no frames leaves no file.
 
 - OpenCV is a guarded import (`_CV2_IMPORTED`), as in `image_io.py`. The
   media package needs OpenCV at import anyway (`video_io.py`).
+- The fMP4 writer gives frames to PyAV and configures FFmpeg with
+  `frag_keyframe`, `empty_moov`, and `default_base_moof`. It uses a
+  one-second GOP and fragment duration. Closing a segment flushes the
+  encoder and muxer before the atomic rename.
 - The writer is opened on the first frame of each segment with that
   frame's shape, unless `resolution` says otherwise. OpenCV writes
   nothing for a frame of a different shape, so keep the source constant.
@@ -175,12 +182,10 @@ too. A segment with no frames leaves no file.
 
 | Class | Responsibilities | Collaborators |
 |-------|------------------|---------------|
-| `VideoWriteStoreForward` | Encode frames into bounded MP4 segments, publish each closed segment atomically into the outbox, report counts in share | `DataSchemeStoreForward`, `cv2.VideoWriter`, `SegmentStoreForward` (through the file system) |
+| `VideoWriteStoreForward` | Encode frames into bounded MP4 segments, publish each closed segment atomically into the outbox, report counts in share | `DataSchemeStoreForward`, PyAV, `cv2.VideoWriter`, `SegmentStoreForward` (through the file system) |
 
 ## Current limitations and roadmap
 
-- Segments are plain MP4 (`mp4v`). Fragmented MP4, so a partially
-  received segment plays, is planned.
 - The element does not announce a closed segment to the Actor. The
   watcher's scan period adds up to two scans of latency.
 - A `VideoReadStoreForward` DataSource for the receiving host is planned.

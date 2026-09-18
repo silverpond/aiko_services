@@ -39,8 +39,8 @@
       "parameters": {
         "data_targets":    "(store_forward://data_out/outbox)",
         "segment_seconds": 10.0,
-        "format":          "mp4v"
-      },  "#": "mp4v: the tag OpenCV uses for MP4 ('MP4V' logs a warning)",
+        "format":          "fmp4"
+      },  "#": "fmp4: fragmented H.264 MP4 through PyAV",
       "input":  [{"name": "images", "type": "[image]"}],
       "output": [],
       "deploy": {

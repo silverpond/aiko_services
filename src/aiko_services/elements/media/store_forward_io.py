@@ -23,11 +23,11 @@
 #
 # To Do
 # ~~~~~
-# - fMP4 (fragmented MP4) segments, so a partially received segment plays
 # - Announce each closed segment to the Actor with "(send_segment ...)"
 # - VideoReadStoreForward: a DataSource reading segments from an inbox
 
 from datetime import datetime, timezone
+from fractions import Fraction
 import os
 import time
 from typing import Tuple
@@ -56,6 +56,57 @@ DEFAULT_FORMAT = "mp4v"         # the fourcc tag OpenCV uses for MP4
 DEFAULT_FRAME_RATE = 15.0       # must match the source "rate"
 DEFAULT_SEGMENT_SECONDS = 10.0  # close a segment after this many seconds
 DEFAULT_SEGMENT_FRAMES = 0      # or after this many frames (0: unused)
+FMP4_FORMAT = "fmp4"
+
+
+class _FMP4Writer:
+    """Write RGB frames as fragmented H.264 MP4 through PyAV."""
+
+    def __init__(self, path, frame_rate, resolution):
+        try:
+            import av
+        except ImportError as exception:
+            raise RuntimeError("fMP4 needs PyAV: pip install av") from exception
+
+        frame_rate = Fraction(str(frame_rate)).limit_denominator(1000)
+        try:
+            self.container = av.open(path, "w", format="mp4", options={
+                "movflags": "frag_keyframe+empty_moov+default_base_moof",
+            })
+            self.stream = self.container.add_stream("libx264", rate=frame_rate)
+            self.stream.width, self.stream.height = resolution
+            self.stream.pix_fmt = "yuv420p"
+            self.stream.codec_context.gop_size = max(
+                1, round(float(frame_rate)))
+            self.av = av
+        except Exception as exception:
+            raise RuntimeError(f"cannot open fMP4 writer: {exception}") \
+                from exception
+        self.opened = True
+
+    def isOpened(self):
+        return self.opened
+
+    def write(self, image):
+        try:
+            frame = self.av.VideoFrame.from_ndarray(image, format="rgb24")
+            for packet in self.stream.encode(frame):
+                self.container.mux(packet)
+        except Exception as exception:
+            raise RuntimeError(f"cannot write fMP4 frame: {exception}") \
+                from exception
+
+    def release(self):
+        if not self.opened:
+            return
+        self.opened = False
+        try:
+            for packet in self.stream.encode():
+                self.container.mux(packet)
+            self.container.close()
+        except Exception as exception:
+            raise RuntimeError(f"cannot finalize fMP4: {exception}") \
+                from exception
 
 def segment_file_name(prefix="", now=None):
     """Segment file name from the UTC open time to the microsecond, one
@@ -76,7 +127,7 @@ def segment_file_name(prefix="", now=None):
 # parameter: "segment_seconds"  close a segment after N seconds (10.0)
 # parameter: "segment_frames"   or after N frames (0: unused); either bound
 # parameter: "frame_rate"       encoded frames per second (15.0)
-# parameter: "format"           OpenCV fourcc tag ("mp4v")
+# parameter: "format"           "fmp4" or an OpenCV fourcc tag ("mp4v")
 # parameter: "resolution"       "WxH", default: the first frame's shape
 # parameter: "segment_prefix"   optional file name prefix (""), see the scheme
 #
@@ -109,7 +160,8 @@ class VideoWriteStoreForward(aiko.DataTarget):  # PipelineElement
         stream_event, diagnostic = super().start_stream(stream, stream_id)
         if stream_event != aiko.StreamEvent.OKAY:
             return stream_event, diagnostic
-        if not _CV2_IMPORTED:
+        format, _ = self.get_parameter("format", DEFAULT_FORMAT)
+        if str(format).lower() != FMP4_FORMAT and not _CV2_IMPORTED:
             diagnostic = "VideoWriteStoreForward needs OpenCV: pip install "  \
                          "opencv-python"
             return aiko.StreamEvent.ERROR, {"diagnostic": diagnostic}
@@ -137,8 +189,15 @@ class VideoWriteStoreForward(aiko.DataTarget):  # PipelineElement
                 stream_event, diagnostic = self._open_segment(stream, image)
                 if stream_event != aiko.StreamEvent.OKAY:
                     return stream_event, diagnostic
-            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            stream.variables["segment_writer"].write(image_bgr)
+            try:
+                if stream.variables["segment_format"] == FMP4_FORMAT:
+                    stream.variables["segment_writer"].write(image)
+                else:
+                    image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                    stream.variables["segment_writer"].write(image_bgr)
+            except RuntimeError as exception:
+                return aiko.StreamEvent.ERROR, {
+                    "diagnostic": str(exception)}
             stream.variables["segment_frames"] += 1
             self._frames_written += 1
 
@@ -146,14 +205,18 @@ class VideoWriteStoreForward(aiko.DataTarget):  # PipelineElement
             frames = stream.variables["segment_frames"]
             if (segment_frames > 0 and frames >= segment_frames)  \
                 or (segment_seconds > 0 and elapsed >= segment_seconds):
-                self._close_segment(stream)
+                stream_event, diagnostic = self._close_segment(stream)
+                if stream_event != aiko.StreamEvent.OKAY:
+                    return stream_event, diagnostic
 
         self.ec_producer.update("frames_written", str(self._frames_written))
         return aiko.StreamEvent.OKAY, {}
 
     def stop_stream(self, stream, stream_id):
         if stream.variables.get("segment_writer") is not None:
-            self._close_segment(stream)
+            stream_event, diagnostic = self._close_segment(stream)
+            if stream_event != aiko.StreamEvent.OKAY:
+                return stream_event, diagnostic
         if stream.variables.get("data_scheme"):    # guard: base has no check
             return super().stop_stream(stream, stream_id)
         return aiko.StreamEvent.OKAY, {}
@@ -176,15 +239,24 @@ class VideoWriteStoreForward(aiko.DataTarget):  # PipelineElement
             resolution = (int(width), int(height))
         else:
             resolution = (image.shape[1], image.shape[0])
-        fourcc = cv2.VideoWriter_fourcc(*str(format))
-        writer = cv2.VideoWriter(
-            temp_path, fourcc, float(frame_rate), resolution)
+        format = str(format).lower()
+        try:
+            if format == FMP4_FORMAT:
+                writer = _FMP4Writer(
+                    temp_path, float(frame_rate), resolution)
+            else:
+                fourcc = cv2.VideoWriter_fourcc(*format)
+                writer = cv2.VideoWriter(
+                    temp_path, fourcc, float(frame_rate), resolution)
+        except RuntimeError as exception:
+            return aiko.StreamEvent.ERROR, {"diagnostic": str(exception)}
         if not writer.isOpened():
             diagnostic = f'cannot open video writer "{temp_path}" '  \
                          f'({format} {resolution} {frame_rate} fps)'
             return aiko.StreamEvent.ERROR, {"diagnostic": diagnostic}
 
         stream.variables["segment_writer"] = writer
+        stream.variables["segment_format"] = format
         stream.variables["segment_name"] = name
         stream.variables["segment_temp"] = temp_path
         stream.variables["segment_frames"] = 0
@@ -199,13 +271,20 @@ class VideoWriteStoreForward(aiko.DataTarget):  # PipelineElement
         temp_path = stream.variables["segment_temp"]
         frames = stream.variables["segment_frames"]
         stream.variables["segment_writer"] = None
-        writer.release()
+        try:
+            writer.release()
+        except RuntimeError as exception:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            return aiko.StreamEvent.ERROR, {"diagnostic": str(exception)}
         if frames == 0:                         # nothing written: no segment
             try:
                 os.remove(temp_path)
             except OSError:
                 pass
-            return
+            return aiko.StreamEvent.OKAY, {}
         final_path = os.path.join(stream.variables["target_outbox"], name)
         os.replace(temp_path, final_path)       # appears complete, at once
         size = os.path.getsize(final_path)
@@ -217,5 +296,6 @@ class VideoWriteStoreForward(aiko.DataTarget):  # PipelineElement
         self.ec_producer.update("segment", "-")
         self.logger.info(
             f"{self.my_id()}: segment {name}: {frames} frames, {size} B")
+        return aiko.StreamEvent.OKAY, {}
 
 # --------------------------------------------------------------------------- #

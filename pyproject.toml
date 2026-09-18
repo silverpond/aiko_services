@@ -59,7 +59,9 @@ dependencies = [
     "wrapt>=1.17.3; python_version >= '3.14'"
 ]
 
-# [project.optional-dependencies]
+[project.optional-dependencies]
+fmp4 = ["av"]
+
 # opencv-python = ["opencv-python~=4.10.0.84"]
 # opencv-contrib-python = ["opencv-contrib-python~=4.10.0.84"]
 # linux = ["PyAudio~=0.2.14"]
