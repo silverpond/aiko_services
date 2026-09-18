@@ -65,7 +65,8 @@ PIPELINE_DEFINITION = """{
         "data_targets":    "(store_forward://OUTBOX)",
         "segment_prefix":  "PREFIX",
         "segment_frames":  SEGMENT_FRAMES,
-        "segment_seconds": SEGMENT_SECONDS
+        "segment_seconds": SEGMENT_SECONDS,
+        "format":          "FORMAT"
       },
       "input":  [{"name": "images", "type": "[image]"}], "output": [],
       "deploy": {
@@ -89,14 +90,17 @@ def _frame_count(path):
         capture.release()
     return count, (width, height)
 
-def _run(outbox, frame_count, segment_frames, segment_seconds, prefix=""):
+def _run(
+        outbox, frame_count, segment_frames, segment_seconds, prefix="",
+        format="mp4v"):
     results = do_results_initialize()
     definition = PIPELINE_DEFINITION  \
         .replace("OUTBOX", str(outbox))  \
         .replace("PREFIX", prefix)  \
         .replace("FRAME_COUNT", str(frame_count))  \
         .replace("SEGMENT_FRAMES", str(segment_frames))  \
-        .replace("SEGMENT_SECONDS", str(segment_seconds))
+        .replace("SEGMENT_SECONDS", str(segment_seconds))  \
+        .replace("FORMAT", format)
     do_create_pipeline(definition, frame_data=None)
     assert not results["watchdog"], "Stream did not stop: watchdog fired"
     assert results["stopped"], "ImageSink.stop_stream() was not invoked"
@@ -107,6 +111,32 @@ def _run(outbox, frame_count, segment_frames, segment_seconds, prefix=""):
         assert SEGMENT_NAME_RE.match(name), name
         assert valid_segment_name(name), name    # the Actor accepts it
     return results, names
+
+def _pyav_fmp4_available():
+    try:
+        import av
+        av.codec.Codec("libx264", "w")
+        return True
+    except Exception:
+        return False
+
+def _mp4_box_types(path):
+    box_types = []
+    with open(path, "rb") as mp4_file:
+        while header := mp4_file.read(8):
+            assert len(header) == 8
+            size = int.from_bytes(header[:4], "big")
+            box_types.append(header[4:].decode("ascii"))
+            if size == 0:
+                break
+            if size == 1:
+                size = int.from_bytes(mp4_file.read(8), "big")
+                header_size = 16
+            else:
+                header_size = 8
+            assert size >= header_size
+            mp4_file.seek(size - header_size, os.SEEK_CUR)
+    return box_types
 
 def test_segments_by_frame_count(tmp_path):
     results, names = _run(tmp_path, 7, 3, 0, prefix="cam0")
@@ -136,3 +166,15 @@ def test_segments_by_seconds(tmp_path):
     assert sum(counts) == 7
     assert 2 <= len(counts) <= 4
     assert all(1 <= count <= 4 for count in counts)
+
+@pytest.mark.skipif(
+    not _pyav_fmp4_available(), reason="fMP4 needs PyAV with libx264")
+def test_fragmented_mp4(tmp_path):
+    _, names = _run(tmp_path, 12, 12, 0, format="fmp4")
+    assert len(names) == 1
+    segment_path = tmp_path / names[0]
+    assert _frame_count(segment_path) == (12, (64, 48))
+    box_types = _mp4_box_types(segment_path)
+    assert box_types[:2] == ["ftyp", "moov"]
+    assert box_types.count("moof") >= 2
+    assert box_types.count("mdat") >= 2
