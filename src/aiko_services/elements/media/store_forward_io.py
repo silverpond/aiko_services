@@ -72,7 +72,6 @@ class _FMP4Writer:
         try:
             self.container = av.open(path, "w", format="mp4", options={
                 "movflags": "frag_keyframe+empty_moov+default_base_moof",
-                "frag_duration": "1000000",  # microseconds
             })
             self.stream = self.container.add_stream("libx264", rate=frame_rate)
             self.stream.width, self.stream.height = resolution
