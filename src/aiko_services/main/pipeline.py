@@ -534,7 +534,9 @@ class PipelineElementImpl(PipelineElement):
 
                 stream_leases = getattr(self.pipeline, "stream_leases", None)
                 if stream_leases is not None:
-                    # Ignore streams destroyed or replaced during source I/O.
+                    # Source I/O runs without the lock, so the stream may be
+                    # destroyed or replaced before the generator returns.
+                    # Do not publish stale data, including after stream ID reuse.
                     stream_lease = stream_leases.get(str(stream.stream_id))
                     if stream_lease is None or stream_lease.stream is not stream:
                         break
