@@ -63,7 +63,7 @@ def test_create_frames_generator_lock_not_released_on_exception():
                 aiko.PipelineImpl.parse_pipeline_definition(file.name)
             pipeline = aiko.PipelineImpl.create_pipeline(
                 None, pipeline_definition, name=None, graph_path=None,
-                stream_id=0, parameters={"test_result": test_result},
+                stream_id="test-stream", parameters={"test_result": test_result},
                 frame_id=0, frame_data=None,
                 grace_time=None)
             test_result["pipeline"] = pipeline
