@@ -532,17 +532,23 @@ class PipelineElementImpl(PipelineElement):
                     stream_event = StreamEvent.ERROR
                     frame_data = {"diagnostic": traceback.format_exc()}
 
-                stream_leases = getattr(self.pipeline, "stream_leases", None)
-                if stream_leases is not None:
-                    # Source I/O runs without the lock, so the stream may be
-                    # destroyed or replaced before the generator returns.
-                    # Do not publish stale data, including after stream ID reuse.
-                    stream_lease = stream_leases.get(str(stream.stream_id))
-                    if stream_lease is None or stream_lease.stream is not stream:
-                        break
-
                 stream.lock.acquire("_create_frames_generator()")
                 try:
+                    # Source I/O runs without the lock, so the stream may be
+                    # destroyed or replaced before the generator returns.
+                    # Revalidate while holding the lock before publishing any
+                    # data, including after stream ID reuse.
+                    stream_leases = getattr(self.pipeline, "stream_leases", None)
+                    if stream_leases is not None:
+                        stream_lease = stream_leases.get(str(stream.stream_id))
+                        if stream_lease is None or stream_lease.stream is not stream:
+                            break
+
+                    # A concurrent STOP or ERROR must not be overwritten by a
+                    # late result from a callback that was already in flight.
+                    if stream.state != StreamState.RUN:
+                        break
+
                     stream.set_state(self.pipeline._process_stream_event(
                         self.name, stream, stream_event, frame_data))
                     if stream.state == StreamState.ERROR:
@@ -1172,14 +1178,16 @@ class PipelineImpl(Pipeline):
             if stream.topic_response:
                 actor = get_actor_mqtt(stream.topic_response, Pipeline)
                 actor.process_frame_response(stream_info, diagnostic)
+
+            # Remove the lease while the stream lock is still held.  A frame
+            # generator validates the lease under the same lock, so it cannot
+            # publish data after destruction or into a reused stream ID.
+            del self.stream_leases[stream_id]
         finally:
             if stream.lock._in_use:
                 stream.lock.release()
             if use_thread_local:
                 self._disable_thread_local("destroy_stream()")
-
-        stream_lease = self.stream_leases[stream_id]
-        del self.stream_leases[stream_id]
 
         if exit_id and exit_id == stream_id:  # "exit_id" acquired earlier
             diagnostic =  \
