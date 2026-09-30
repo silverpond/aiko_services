@@ -520,7 +520,9 @@ class PipelineElementImpl(PipelineElement):
                     elif mailbox_name in event.mailboxes:
                         mailbox_queue = event.mailboxes[mailbox_name].queue
 
-                stream.lock.acquire("_create_frames_generator()")
+                # Source reads may block while reconnecting; never hold the
+                # per-stream lock across frame_generator() so other frames
+                # can continue through the shared processing thread.
                 try:
                     stream_event, frame_data = frame_generator(stream, frame_id)
                 except Exception as exception:
@@ -530,30 +532,48 @@ class PipelineElementImpl(PipelineElement):
                     stream_event = StreamEvent.ERROR
                     frame_data = {"diagnostic": traceback.format_exc()}
 
-                stream.set_state(self.pipeline._process_stream_event(
-                    self.name, stream, stream_event, frame_data))
-                if stream.state == StreamState.ERROR:
-                    break
+                stream.lock.acquire("_create_frames_generator()")
+                try:
+                    # Source I/O runs without the lock, so the stream may be
+                    # destroyed or replaced before the generator returns.
+                    # Revalidate while holding the lock before publishing any
+                    # data, including after stream ID reuse.
+                    stream_leases = getattr(self.pipeline, "stream_leases", None)
+                    if stream_leases is not None:
+                        stream_lease = stream_leases.get(str(stream.stream_id))
+                        if stream_lease is None or stream_lease.stream is not stream:
+                            break
 
-                if stream.state == StreamState.RUN and frame_data:
-                    graph_path, _ = self.get_parameter("_graph_path_", None)
-                    if isinstance(frame_data, dict):
-                        frame_data = [frame_data]
-                    if isinstance(frame_data, list):
-                        for a_frame_data in frame_data:
-                            self.create_frame(
-                                stream, a_frame_data, frame_id, graph_path)
-                            frame_id += 1
-                            self.pipeline.thread_local.frame_id = frame_id
-                    else:
-                        self.logger.warning(
-                            "Frame generator must return either "
-                            "{frame_data} or [{frame_data}]")
+                    # A concurrent STOP or ERROR must not be overwritten by a
+                    # late result from a callback that was already in flight.
+                    if stream.state != StreamState.RUN:
+                        break
 
-                if stream.state in _STREAM_STATE_WORKING:
-                    stream.set_state(StreamState.RUN)
-                if stream.lock._in_use:
-                    stream.lock.release()
+                    stream.set_state(self.pipeline._process_stream_event(
+                        self.name, stream, stream_event, frame_data))
+                    if stream.state == StreamState.ERROR:
+                        break
+
+                    if stream.state == StreamState.RUN and frame_data:
+                        graph_path, _ = self.get_parameter("_graph_path_", None)
+                        if isinstance(frame_data, dict):
+                            frame_data = [frame_data]
+                        if isinstance(frame_data, list):
+                            for a_frame_data in frame_data:
+                                self.create_frame(
+                                    stream, a_frame_data, frame_id, graph_path)
+                                frame_id += 1
+                                self.pipeline.thread_local.frame_id = frame_id
+                        else:
+                            self.logger.warning(
+                                "Frame generator must return either "
+                                "{frame_data} or [{frame_data}]")
+
+                    if stream.state in _STREAM_STATE_WORKING:
+                        stream.set_state(StreamState.RUN)
+                finally:
+                    if stream.lock._in_use:
+                        stream.lock.release()
 
                 if rate and stream.state == StreamState.RUN:
                 # TODO: When "rate" parameter updates, then fix "period_time"
@@ -1158,14 +1178,16 @@ class PipelineImpl(Pipeline):
             if stream.topic_response:
                 actor = get_actor_mqtt(stream.topic_response, Pipeline)
                 actor.process_frame_response(stream_info, diagnostic)
+
+            # Remove the lease while the stream lock is still held.  A frame
+            # generator validates the lease under the same lock, so it cannot
+            # publish data after destruction or into a reused stream ID.
+            del self.stream_leases[stream_id]
         finally:
             if stream.lock._in_use:
                 stream.lock.release()
             if use_thread_local:
                 self._disable_thread_local("destroy_stream()")
-
-        stream_lease = self.stream_leases[stream_id]
-        del self.stream_leases[stream_id]
 
         if exit_id and exit_id == stream_id:  # "exit_id" acquired earlier
             diagnostic =  \
